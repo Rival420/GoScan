@@ -39,7 +39,7 @@ func main() {
 
       // Create a new packet with the TCP layer
       packet := gopacket.NewPacket(nil, layers.LayerTypeTCP, gopacket.Default)
-      packet.SetNetworkLayerForChecksum(&tcp)
+      packet.SetNetworkLayer(&tcp)
 
       // Serialize the packet
       buf := gopacket.NewSerializeBuffer()
