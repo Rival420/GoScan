@@ -36,7 +36,7 @@ func main() {
 
       // Create a new TCP packet with the specified destination port
       tcp := layers.TCP{DstPort: layers.TCPPort(port)}
-      
+
       // Create a new packet with the TCP layer
       packet := gopacket.NewPacket(nil, layers.LayerTypeTCP, gopacket.Default)
       packet.SetNetworkLayerForChecksum(&tcp)
@@ -47,7 +47,7 @@ func main() {
         FixLengths:       true,
         ComputeChecksums: true,
       }
-      err := gopacket.SerializeLayers(buf, opts, &tcp)
+      err := gopacket.SerializeLayers(buf, opts, packet)
       if err != nil {
         log.Fatal(err)
       }
