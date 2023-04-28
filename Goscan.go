@@ -1,81 +1,87 @@
 package main
 
 import (
-  "fmt"
-  "log"
-  "os"
-  "sync"
+	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"sync"
 
-  "github.com/google/gopacket"
-  "github.com/google/gopacket/layers"
-  "github.com/google/gopacket/pcap"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
 )
 
+const maxConcurrentJobs = 50
+
 func main() {
-  // Check if a host was provided as an argument
-  if len(os.Args) != 2 {
-    fmt.Println("Usage: go run scan.go [host]")
-    os.Exit(1)
-  }
+	if len(os.Args) != 4 {
+		fmt.Println("Usage: go run scan.go [host] [startPort] [endPort]")
+		os.Exit(1)
+	}
 
-  // Store the host in a variable
-  host := os.Args[1]
+	host := os.Args[1]
 
-  // Use a WaitGroup to track the goroutines
-  var wg sync.WaitGroup
+	startPort, err := strconv.Atoi(os.Args[2])
+	if err != nil || startPort < 1 || startPort > 65535 {
+		fmt.Println("Invalid startPort. Provide a valid port number between 1 and 65535.")
+		os.Exit(1)
+	}
 
-  // Loop through ports 1-1024
-  for port := 1; port <= 1024; port++ {
-    // Add one to the WaitGroup counter
-    wg.Add(1)
+	endPort, err := strconv.Atoi(os.Args[3])
+	if err != nil || endPort < 1 || endPort > 65535 || endPort < startPort {
+		fmt.Println("Invalid endPort. Provide a valid port number between startPort and 65535.")
+		os.Exit(1)
+	}
 
-    // Launch a goroutine to scan the current port
-    go func(port int) {
-      // Decrement the WaitGroup counter when the goroutine finishes
-      defer wg.Done()
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, maxConcurrentJobs)
 
-      // Create a new TCP packet with the specified destination port
-      tcp := layers.TCP{DstPort: layers.TCPPort(port)}
+	for port := startPort; port <= endPort; port++ {
+		wg.Add(1)
+		semaphore <- struct{}{}
 
-      // Create a new packet with the TCP layer
-      packet := gopacket.NewPacket(nil, layers.LayerTypeTCP, gopacket.Default)
-      packet.SetNetworkLayer(&tcp)
+		go func(port int) {
+			defer func() {
+				<-semaphore
+				wg.Done()
+			}()
 
-      // Serialize the packet
-      buf := gopacket.NewSerializeBuffer()
-      opts := gopacket.SerializeOptions{
-        FixLengths:       true,
-        ComputeChecksums: true,
-      }
-      err := gopacket.SerializeLayers(buf, opts, packet)
-      if err != nil {
-        log.Fatal(err)
-      }
+			tcp := layers.TCP{DstPort: layers.TCPPort(port)}
 
-      // Open a new PCAP handle for the host
-      handle, err := pcap.OpenLive(host, 65536, true, pcap.BlockForever)
-      if err != nil {
-        log.Fatal(err)
-      }
-      defer handle.Close()
+			packet := gopacket.NewPacket(nil, layers.LayerTypeTCP, gopacket.Default)
+			packet.SetNetworkLayer(&tcp)
 
-      // Send the packet and check if an ACK was received
-      err = handle.WritePacketData(buf.Bytes())
-      if err != nil {
-        log.Fatal(err)
-      }
-      packet, _, err := handle.ZeroCopyReadPacketData()
-      if err != nil {
-        log.Fatal(err)
-      }
+			buf := gopacket.NewSerializeBuffer()
+			opts := gopacket.SerializeOptions{
+				FixLengths:       true,
+				ComputeChecksums: true,
+			}
+			err := gopacket.SerializeLayers(buf, opts, packet)
+			if err != nil {
+				log.Fatal(err)
+			}
 
-      // If an ACK was received, the port is open
-      if len(packet) > 0 {
-        fmt.Println(fmt.Sprintf("%s:%d", host, port), "is open")
-      }
-    }(port)
-  }
+			handle, err := pcap.OpenLive(host, 65536, true, pcap.BlockForever)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer handle.Close()
 
-  // Wait for all goroutines to finish
-  wg.Wait()
+			err = handle.WritePacketData(buf.Bytes())
+			if err != nil {
+				log.Fatal(err)
+			}
+			packet, _, err := handle.ZeroCopyReadPacketData()
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			if len(packet) > 0 {
+				fmt.Printf("%s:%d is open\n", host, port)
+			}
+		}(port)
+	}
+
+	wg.Wait()
 }
